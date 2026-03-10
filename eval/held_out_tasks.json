@@ -1,0 +1,374 @@
+{
+  "description": "Held-out evaluation tasks — never seen during RL training. Tests same capabilities with different specific questions.",
+  "tasks": [
+    {
+      "id": "eval_001",
+      "category": "zero_tool",
+      "name": "Chemistry knowledge",
+      "prompt": "What is the chemical symbol for gold? Answer in one sentence. Do NOT use any tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains": ["Au"],
+        "tool_count_exact": 0
+      }
+    },
+    {
+      "id": "eval_002",
+      "category": "zero_tool",
+      "name": "Geography knowledge",
+      "prompt": "What is the longest river in Africa? Answer in one sentence without using tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains": ["Nile"],
+        "tool_count_exact": 0
+      }
+    },
+    {
+      "id": "eval_003",
+      "category": "zero_tool",
+      "name": "Arithmetic without tools",
+      "prompt": "What is 847 divided by 7? Give the exact result. Do NOT use any tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains": ["121"],
+        "tool_count_exact": 0
+      }
+    },
+    {
+      "id": "eval_004",
+      "category": "zero_tool",
+      "name": "Programming concept",
+      "prompt": "Explain what a mutex is in concurrent programming. Keep your answer to 2-3 sentences. Do not use tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains_any": ["mutual exclusion", "lock", "synchronization", "thread"],
+        "response_min_length": 50
+      }
+    },
+    {
+      "id": "eval_005",
+      "category": "zero_tool",
+      "name": "Tool-use reasoning",
+      "prompt": "If someone asked you to calculate the factorial of 20, would you use a tool or answer from memory? Explain your reasoning in 2-3 sentences. Do NOT use any tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_min_length": 80
+      }
+    },
+    {
+      "id": "eval_006",
+      "category": "terminal",
+      "name": "Date command",
+      "prompt": "Use a shell command to print today's date. Report the output.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_contains_any": ["2026", "Mar", "March"],
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_007",
+      "category": "terminal",
+      "name": "Word count",
+      "prompt": "Create a file /tmp/eval_words.txt containing the text 'the quick brown fox jumps over the lazy dog', then count the number of words in it using wc.",
+      "requires_tool": true,
+      "max_tool_calls": 4,
+      "verify": {
+        "response_contains": ["9"],
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_008",
+      "category": "terminal",
+      "name": "Environment variable",
+      "prompt": "Use a shell command to print the value of the HOME environment variable.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_contains_any": ["/home", "/root", "/Users"],
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_009",
+      "category": "terminal",
+      "name": "Disk space check",
+      "prompt": "Check disk space usage using the df command. Report how much space is available on the root filesystem.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_has_number": true,
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_010",
+      "category": "code_execution",
+      "name": "Fibonacci computation",
+      "prompt": "Write and run Python code to compute the 15th Fibonacci number. Report the result.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_contains": ["610"],
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_011",
+      "category": "code_execution",
+      "name": "String manipulation",
+      "prompt": "Write Python code to reverse the string 'evaluation_test_2026' and print the result. Run it and report the output.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_contains": ["6202_tset_noitaulave"],
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_012",
+      "category": "code_execution",
+      "name": "List comprehension",
+      "prompt": "Use Python to generate and print all prime numbers between 1 and 50.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_contains": ["47"],
+        "response_contains_any": ["2", "3", "5", "7"],
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_013",
+      "category": "code_execution",
+      "name": "Dictionary operations",
+      "prompt": "Write Python code that creates a dictionary mapping the first 5 planet names to their order from the sun (Mercury=1, Venus=2, etc.), then prints the dictionary sorted by value. Run it.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_contains": ["Mercury"],
+        "response_contains_any": ["Venus", "Earth", "Mars", "Jupiter"],
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_014",
+      "category": "file_ops",
+      "name": "Create and verify file",
+      "prompt": "Create a file at /tmp/eval_test_014.txt containing 'Hello from eval task 014'. Then read it back and confirm the contents.",
+      "requires_tool": true,
+      "max_tool_calls": 3,
+      "verify": {
+        "response_contains": ["Hello from eval task 014"],
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_015",
+      "category": "file_ops",
+      "name": "JSON file creation",
+      "prompt": "Create a JSON file at /tmp/eval_config.json with the following structure: {\"name\": \"eval\", \"version\": 2, \"enabled\": true}. Then read it back and confirm it's valid JSON.",
+      "requires_tool": true,
+      "max_tool_calls": 3,
+      "verify": {
+        "response_contains": ["eval"],
+        "valid_json": true,
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_016",
+      "category": "file_ops",
+      "name": "File search",
+      "prompt": "Create three Python files in /tmp/eval_search/: main.py, utils.py, and test_main.py. Put a comment '# eval marker' in each. Then use grep to find all files containing 'eval marker'.",
+      "requires_tool": true,
+      "max_tool_calls": 6,
+      "verify": {
+        "response_contains": ["eval marker"],
+        "response_contains_any": ["main.py", "utils.py", "test_main.py"],
+        "tool_count_min": 4
+      }
+    },
+    {
+      "id": "eval_017",
+      "category": "multi_step",
+      "name": "Compute and save",
+      "prompt": "Calculate the sum of all integers from 1 to 100 using Python, save the result to /tmp/eval_sum.txt, then read the file back to confirm the answer is correct.",
+      "requires_tool": true,
+      "max_tool_calls": 4,
+      "verify": {
+        "response_contains": ["5050"],
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_018",
+      "category": "multi_step",
+      "name": "Data pipeline",
+      "prompt": "Create a CSV file at /tmp/eval_data.csv with columns 'name,score' and three rows: Alice,85 Bob,92 Carol,78. Then write Python code to read the CSV, compute the average score, and report it.",
+      "requires_tool": true,
+      "max_tool_calls": 4,
+      "verify": {
+        "response_contains": ["85"],
+        "response_has_number": true,
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_019",
+      "category": "multi_step",
+      "name": "Error recovery",
+      "prompt": "Try to read the file /tmp/nonexistent_eval_file.txt. When that fails, create it with the content 'recovered', then read it again to confirm.",
+      "requires_tool": true,
+      "max_tool_calls": 4,
+      "verify": {
+        "response_contains": ["recovered"],
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_020",
+      "category": "planning",
+      "name": "Multi-step plan",
+      "prompt": "I need to create a Python project at /tmp/eval_project/ with: 1) a main.py that prints 'Hello World', 2) a requirements.txt with 'requests>=2.28', 3) a README.md explaining the project. Create all three files, then list the directory to confirm.",
+      "requires_tool": true,
+      "max_tool_calls": 6,
+      "verify": {
+        "response_contains_any": ["main.py", "requirements.txt", "README.md"],
+        "tool_count_min": 3
+      }
+    },
+    {
+      "id": "eval_021",
+      "category": "planning",
+      "name": "Diagnostic workflow",
+      "prompt": "Check what Python version is installed, what operating system we're running, and how much free memory is available. Summarize all three findings.",
+      "requires_tool": true,
+      "max_tool_calls": 4,
+      "verify": {
+        "response_contains_any": ["Python", "python"],
+        "response_has_number": true,
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_022",
+      "category": "self_improvement",
+      "name": "Capability analysis",
+      "prompt": "Looking at the tools available to you (bash, read, write, python, find, grep), which tool would be most useful for debugging a failing unit test? Explain your reasoning. Do not actually use any tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains_any": ["bash", "python", "read", "grep"],
+        "response_min_length": 100
+      }
+    },
+    {
+      "id": "eval_023",
+      "category": "self_improvement",
+      "name": "Efficiency critique",
+      "prompt": "A developer used 8 separate bash calls to: create a directory, create 3 files in it, read each file back, and list the directory. How many tool calls would be minimally needed? Explain. Do not use tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_has_number": true,
+        "response_min_length": 80
+      }
+    },
+    {
+      "id": "eval_024",
+      "category": "code_execution",
+      "name": "Matrix operations",
+      "prompt": "Write Python code to multiply two 2x2 matrices: [[1,2],[3,4]] and [[5,6],[7,8]]. Print the resulting matrix.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_contains": ["19"],
+        "response_contains_any": ["22", "43", "50"],
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_025",
+      "category": "terminal",
+      "name": "Process listing",
+      "prompt": "Use a shell command to count how many processes are currently running on this system. Report the number.",
+      "requires_tool": true,
+      "max_tool_calls": 2,
+      "verify": {
+        "response_has_number": true,
+        "tool_count_min": 1
+      }
+    },
+    {
+      "id": "eval_026",
+      "category": "zero_tool",
+      "name": "Algorithm complexity",
+      "prompt": "What is the time complexity of binary search? Answer in one sentence using Big O notation. Do not use tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains_any": ["O(log n)", "O(log(n))", "log n", "logarithmic"],
+        "tool_count_exact": 0
+      }
+    },
+    {
+      "id": "eval_027",
+      "category": "zero_tool",
+      "name": "Linux knowledge",
+      "prompt": "What does the chmod command do in Linux? Answer in one sentence. Do not use tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains_any": ["permission", "permissions", "access"],
+        "tool_count_exact": 0
+      }
+    },
+    {
+      "id": "eval_028",
+      "category": "file_ops",
+      "name": "Append to file",
+      "prompt": "Create a file /tmp/eval_log.txt with 'line 1'. Then append 'line 2' to it (don't overwrite). Read the file and confirm both lines are present.",
+      "requires_tool": true,
+      "max_tool_calls": 5,
+      "verify": {
+        "response_contains": ["line 1"],
+        "response_contains_any": ["line 2"],
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_029",
+      "category": "multi_step",
+      "name": "Sort and filter",
+      "prompt": "Write a file /tmp/eval_numbers.txt with the numbers 42, 17, 93, 8, 55, 31 (one per line). Then use Python to read the file, sort the numbers, filter only those above 30, and print the result.",
+      "requires_tool": true,
+      "max_tool_calls": 4,
+      "verify": {
+        "response_contains": ["42"],
+        "response_contains_any": ["55", "93", "31"],
+        "tool_count_min": 2
+      }
+    },
+    {
+      "id": "eval_030",
+      "category": "zero_tool",
+      "name": "HTTP status codes",
+      "prompt": "What HTTP status code means 'Not Found'? What about 'Internal Server Error'? Answer briefly without tools.",
+      "requires_tool": false,
+      "max_tool_calls": 0,
+      "verify": {
+        "response_contains": ["404"],
+        "response_contains_any": ["500"],
+        "tool_count_exact": 0
+      }
+    }
+  ]
+}

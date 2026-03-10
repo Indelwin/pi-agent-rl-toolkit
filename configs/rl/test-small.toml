@@ -1,0 +1,21 @@
+# =============================================================
+# Small test run — verify ToolUseRubric works on PI
+# =============================================================
+# 10 steps, smallest available model, minimal batch
+# Should complete in ~10 minutes
+# =============================================================
+
+model = "Qwen/Qwen3-4B-Instruct-2507"
+max_steps = 10
+batch_size = 32
+rollouts_per_example = 4
+
+[sampling]
+max_tokens = 2048
+
+[[env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 5 }
+
+[checkpoints]
+interval = 10

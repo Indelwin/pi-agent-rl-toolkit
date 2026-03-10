@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.prime/
+outputs/
+*.zip
+adapter_download/
+eval/results_*/
+.env
+secrets.env
