@@ -1,0 +1,13 @@
+endpoints_path = "../endpoints.toml"
+
+endpoint_id = "qwen3-30b-i"
+save_results = true
+rollouts_per_example = 3
+max_tokens = 4096
+
+[env_args]
+max_turns = 10
+
+[[eval]]
+env_id = "anarion/pi_agent_env"
+num_examples = 20
