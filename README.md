@@ -109,6 +109,14 @@ id = "anarion/pi_agent_env"
 args = { max_turns = 10 }
 num_examples = 50
 rollouts_per_example = 4
+
+[val]
+num_examples = 64
+rollouts_per_example = 1
+interval = 10
+
+[buffer]
+online_difficulty_filtering = true
 ```
 
 ## Rubric
@@ -184,6 +192,10 @@ pi-agent-rl-toolkit/
 3. **Watch tool call metrics, not just reward.** Reward going up while tool calls collapse is the #1 sign of gaming.
 
 4. **RL alone works (no SFT needed).** GRPO from a base instruct model produced meaningful improvements without any supervised fine-tuning.
+
+5. **Run baseline evals before training.** Use `prime eval run` and the `[eval]` config section with `eval_base_model = true` to get proper before/after comparison curves.
+
+6. **Use difficulty filtering.** `online_difficulty_filtering = true` in the `[buffer]` section focuses training on examples the model can partially but not consistently solve.
 
 ## Built With
 

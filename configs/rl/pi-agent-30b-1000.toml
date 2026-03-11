@@ -34,3 +34,11 @@ id = "anarion/pi_agent_env"
 args = { max_turns = 10 }
 num_examples = 50
 rollouts_per_example = 4
+
+[val]
+num_examples = 64
+rollouts_per_example = 1
+interval = 10
+
+[buffer]
+online_difficulty_filtering = true
