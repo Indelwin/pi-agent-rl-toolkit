@@ -24,3 +24,13 @@ args = { max_turns = 10 }
 
 [checkpoints]
 interval = 50
+
+[eval]
+interval = 100
+eval_base_model = true
+
+[[eval.env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 10 }
+num_examples = 50
+rollouts_per_example = 4

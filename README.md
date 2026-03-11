@@ -99,6 +99,16 @@ args = { max_turns = 10 }
 
 [checkpoints]
 interval = 50
+
+[eval]
+interval = 100
+eval_base_model = true
+
+[[eval.env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 10 }
+num_examples = 50
+rollouts_per_example = 4
 ```
 
 ## Rubric
@@ -181,6 +191,21 @@ pi-agent-rl-toolkit/
 - [verifiers](https://github.com/primeintellect-ai/verifiers) — Environment + rubric framework
 - [Qwen3-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507) — Base model
 - [Qwen3-4B-Instruct](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) — Judge model (via PI inference)
+
+## Deployed Adapter
+
+The trained LoRA adapter is deployed on PI inference:
+
+```bash
+curl -X POST https://api.pinference.ai/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PRIME_API_KEY" \
+  -d '{
+    "model": "Qwen/Qwen3-30B-A3B-Instruct-2507:wgzna1uwxd52pbv4hw5wtiru",
+    "messages": [{"role": "user", "content": "Write a Python function to sort a list"}],
+    "max_tokens": 512
+  }'
+```
 
 ## Training Runs
 
