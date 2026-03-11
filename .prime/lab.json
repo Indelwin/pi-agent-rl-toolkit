@@ -1,0 +1,10 @@
+{
+  "choices": {
+    "agents": [
+      "claude"
+    ],
+    "primary_agent": "claude",
+    "use_multiple_agents": false
+  },
+  "setup_source": "prime lab setup"
+}

@@ -1,22 +1,35 @@
 # Pi Agent RL Toolkit
 
-Train AI coding agents to use tools better using **reinforcement learning (GRPO)** on [Prime Intellect](https://www.primeintellect.ai/)'s hosted training infrastructure.
-
-Works with [Pi Agent](https://github.com/mariozechner/pi-coding-agent) — a coding agent framework by Mario Zechner.
+Train AI coding agents to use tools effectively using **reinforcement learning (GRPO)** on [Prime Intellect](https://docs.primeintellect.ai/guides/rl-training), with the [verifiers](https://github.com/primeintellect-ai/verifiers) framework.
 
 ## What This Does
 
-This toolkit lets you:
+An RL environment that teaches **Qwen3-30B-A3B** to use coding tools (bash, read, write, python, find, grep) across 598 diverse tasks. The model learns *when* to use tools, *when* to answer directly, and how to use tools efficiently.
 
-1. **Generate training tasks** — 598 synthetic tasks across 7 categories (bash, python, file ops, planning, etc.)
-2. **Train via RL** — GRPO training on Prime Intellect's hosted GPUs
-3. **Score with an LLM judge** — 4-dimension rubric that prevents reward hacking
-4. **Evaluate** — Compare base model vs trained adapter on held-out tasks
-5. **Deploy** — One command to deploy your adapter for inference
+## Results
 
-### Results
+### v2: 1000-Step Run (with anti-gaming guardrail)
 
-Our first training run improved tool-use capabilities without degrading knowledge:
+| Steps | Reward | Avg Tool Calls |
+|-------|--------|----------------|
+| 0-100 | 0.933 | 0.88 |
+| 100-200 | 0.942 | 0.77 |
+| 200-300 | 0.952 | 0.72 |
+| 300-400 | 0.961 | 0.70 |
+| 400-500 | 0.969 | 0.63 |
+| 500-600 | 0.979 | 0.60 |
+| 600-700 | 0.981 | 0.61 |
+| 700-800 | 0.985 | 0.56 |
+| 800-900 | 0.978 | 0.53 |
+| 900-1000 | 0.977 | 0.54 |
+
+**Best reward:** 0.994 · **Improvement:** +0.04 · **Tool calls stable** at ~0.54
+
+The model gets better at tasks while becoming more efficient with tools (fewer calls per task) — but never stops using them when needed (`tool_use_required` stays at ~1.0 throughout).
+
+### v1: 200-Step Run (original proof of concept)
+
+Our first run showed RL training works — task completion went from 96.7% to 100% on held-out eval tasks with zero regressions:
 
 | Category | Base Model | + RL Adapter | Change |
 |---|---|---|---|
@@ -25,214 +38,155 @@ Our first training run improved tool-use capabilities without degrading knowledg
 | code_execution | 0.955 | 0.955 | — |
 | terminal | 0.955 | 0.955 | — |
 | zero_tool | 1.000 | 1.000 | — |
-| **Overall** | 0.942 | **0.965** | **+0.023** |
 
-Task completion went from 96.7% → **100%** on held-out eval tasks. Zero regressions.
+v1 adapter: [Indelwin/Qwen3-30B-A3B-ToolAgent-GRPO](https://huggingface.co/Indelwin/Qwen3-30B-A3B-ToolAgent-GRPO)
 
-Trained adapter: [Indelwin/Qwen3-30B-A3B-ToolAgent-GRPO](https://huggingface.co/Indelwin/Qwen3-30B-A3B-ToolAgent-GRPO)
+## Reward Hacking (and How We Fixed It)
+
+When scaling from 200 to 1000 steps, the model **gamed the LLM judge**. It learned to skip tools entirely and write confident text answers, because the judge would still give high scores:
+
+- Tool calls collapsed: 0.91 → 0.13
+- Task completion hit 0.99 (fake — model just sounded confident)
+
+We stopped the run and added `tool_use_required` — a guardrail reward function. 53% of tasks are tagged `requires_tool: true`, and the model gets 0.0 if it skips tools on those tasks. After rebalancing the rubric weights, tool calls stabilised and reward improvement became genuine.
+
+| | v1 (gamed run) | v2 (with guardrail) |
+|---|---|---|
+| Tool calls | 0.91 → **0.13** (collapsed) | 0.88 → **0.54** (stable) |
+| Reward | 0.99 (fake confidence) | 0.98 (genuine) |
+| `tool_use_required` | N/A | ~1.0 ✅ |
 
 ## Quick Start
 
-### Prerequisites
-
-- [Prime Intellect account](https://app.primeintellect.ai/)
-- [OpenRouter API key](https://openrouter.ai/) (about $5-10 for a full training run, for LLM judge)
-- Python 3.10+
-- `prime` CLI: `pip install prime-cli`
-
-### Setup
-
 ```bash
-git clone https://github.com/YOUR_USERNAME/pi-agent-rl-toolkit.git
-cd pi-agent-rl-toolkit
+# Install prime CLI
+uv tool install prime
 
-# Login to Prime Intellect
+# Login
 prime login
 
-# Push the training environment to PI Hub
-prime env push --path ./environments/pi_agent_env
+# Set up secrets for the LLM judge (PI inference)
+cat > secrets.env << 'EOF'
+PRIME_API_KEY="${PRIME_API_KEY}"
+PRIME_TEAM_ID="${PRIME_TEAM_ID}"
+EOF
+
+# Run a quick eval against the base model
+prime eval run anarion/pi_agent_env -m Qwen/Qwen3-30B-A3B-Instruct-2507 -n 10
+
+# View results
+prime eval tui
+
+# Start RL training (1000 steps)
+prime rl run configs/rl/pi-agent-30b-1000.toml
 ```
 
-### Train
+## Training Config
 
-```bash
-# Quick test (10 steps, about 5 min, validates everything works)
-scripts/quick_test.sh <your-openrouter-key>
+```toml
+model = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+max_steps = 1000
+batch_size = 256
+rollouts_per_example = 8
+env_file = ["../../secrets.env"]
 
-# Production training (200 steps, approx 2 hours)
-prime rl run configs/rl/pi-agent-30b-judge.toml \
-  -e OPENAI_API_KEY=<your-openrouter-key> \
-  -e OPENAI_BASE_URL=https://openrouter.ai/api/v1
+[sampling]
+max_tokens = 4096
+
+[[env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 10 }
+
+[checkpoints]
+interval = 50
 ```
 
-### Monitor
+## Rubric
 
-```bash
-# One-shot status
-scripts/monitor.sh <run_id>
+5-dimension reward combining an LLM judge with programmatic scoring:
 
-# Live polling every 60s
-scripts/monitor.sh <run_id> --watch
-```
-
-### Deploy & Evaluate
-
-```bash
-# Deploy the trained adapter
-scripts/deploy.sh <run_id>
-
-# Run eval: base model vs adapter
-python3 eval/run_eval.py --adapter <adapter_id>
-
-# Undeploy when done (saves credits)
-scripts/deploy.sh --undeploy <adapter_id>
-```
-
-### Full Pipeline (one command)
-
-```bash
-scripts/full_pipeline.sh configs/rl/pi-agent-30b-judge.toml <your-openrouter-key>
-```
-
-This runs the entire pipeline: push environment → train → monitor → deploy → evaluate.
-
-## How It Works
-
-### Training Environment
-
-The environment (`environments/pi_agent_env/`) provides:
-
-- **6 tools**: `bash`, `python`, `read`, `write`, `find`, `grep`
-- **598 training tasks** across 7 categories
-- **ToolUseRubric** — a 4-dimension scoring system
-
-### ToolUseRubric
-
-The reward signal uses four weighted dimensions:
-
-| Dimension | Weight | Type | What it measures |
+| Dimension | Weight | Type | Description |
 |---|---|---|---|
-| **Task Completion** | 0.50 | LLM Judge | Did the agent actually solve the task? |
-| **Tool Outcomes** | 0.20 | Heuristic | Did tool calls succeed (no errors)? |
-| **Efficiency** | 0.15 | Heuristic | Were tool calls within budget? |
-| **Dummy Call Detection** | 0.15 | Heuristic | No redundant calls, results used? |
+| `task_completion` | 0.35 | LLM judge | Did the agent complete the task? |
+| `tool_use_required` | 0.20 | Programmatic | Must use tools when task requires them |
+| `tool_outcomes` | 0.20 | Programmatic | Did tool calls succeed? |
+| `efficiency` | 0.10 | Programmatic | Minimal calls within budget |
+| `dummy_call_detection` | 0.15 | Programmatic | No redundant/wasted calls |
 
-The LLM judge (`gpt-4.1-nano` via OpenRouter, about $0.03/step) is **critical**. Without it, the model games the heuristic metrics within about 35 steps by simply never using tools and writing plausible-sounding responses.
+The LLM judge runs via PI inference (Qwen3-4B-Instruct) — no external API keys needed.
 
-### Task Categories
+## Tools
 
-| Category | Count | Tools | Description |
-|---|---|---|---|
-| `zero_tool` | 247 | None | Factual, arithmetic, reasoning — must NOT use tools |
-| `code_execution` | 100 | `python` | Python computation tasks |
-| `terminal` | 99 | `bash` | Shell command execution |
-| `file_ops` | 54 | `read`, `write`, `bash` | File create/read/write/search |
-| `self_improvement` | 34 | None | Meta-reasoning about AI capabilities |
-| `planning` | 32 | Various | Plan-then-execute workflows |
-| `multi_step` | 32 | Various | Efficient multi-tool workflows |
+6 tools replicating a coding agent's capabilities:
+
+| Tool | Description |
+|---|---|
+| `bash` | Execute shell commands |
+| `read` | Read file contents |
+| `write` | Write/create files |
+| `python` | Execute Python code |
+| `find` | Find files matching glob patterns |
+| `grep` | Search file contents with regex |
+
+## Dataset
+
+598 tasks across 7 categories:
+
+| Category | Count | Description |
+|---|---|---|
+| zero_tool | 247 | Knowledge questions (no tools needed) |
+| code_execution | 100 | Python computation tasks |
+| terminal | 99 | Shell command tasks |
+| file_ops | 54 | File creation/manipulation |
+| self_improvement | 34 | Meta-tasks about coding practices |
+| planning | 32 | Multi-step planning tasks |
+| multi_step | 32 | Tasks requiring multiple tool calls |
+
+53% of tasks are tagged `requires_tool: true`.
 
 ## Project Structure
 
 ```
 pi-agent-rl-toolkit/
-├── configs/rl/
-│   ├── pi-agent-30b-judge.toml     # Production config (30B MoE + judge)
-│   └── test-small.toml             # Test config (4B, 10 steps)
-├── environments/pi_agent_env/
-│   ├── pi_agent_env/
-│   │   ├── pi_agent_env.py         # Tools + ToolUseRubric + dataset loader
-│   │   └── pi_agent_tasks.json     # 598 training tasks
-│   └── pyproject.toml
-├── eval/
-│   ├── held_out_tasks.json          # 30 held-out eval tasks
-│   └── run_eval.py                  # Evaluation pipeline
-├── scripts/
-│   ├── full_pipeline.sh             # End-to-end automation
-│   ├── monitor.sh                   # Training run monitoring
-│   ├── deploy.sh                    # Adapter deployment
-│   ├── quick_test.sh                # Validation run
-│   └── check_balance.sh             # Account status check
-├── generate_tasks.py                # Task generation (batch 1)
-├── generate_tasks_batch2.py         # Task generation (batch 2)
-├── generate_tasks_batch3.py         # Task generation (batch 3)
-├── convert_tasks_pi.py              # Convert raw tasks → Pi Agent format
-└── synthetic_tasks.json             # 738 generated tasks (pre-conversion)
-```
-
-## Configuration
-
-### Available Models
-
-```bash
-prime rl models    # list all models available for RL training
-```
-
-Tested models:
-- `Qwen/Qwen3-4B-Thinking-2507` — fast testing (about 5 min for 10 steps)
-- `Qwen/Qwen3-30B-A3B-Instruct-2507` — best balance (MoE, 3B active)
-- `Qwen/Qwen3-30B-A3B-Thinking-2507` — MoE with reasoning
-
-### Config Options
-
-```toml
-model = "Qwen/Qwen3-30B-A3B-Instruct-2507"
-max_steps = 200           # more steps = more training
-batch_size = 256          # samples per step
-rollouts_per_example = 8  # rollouts per task
-
-[sampling]
-max_tokens = 4096         # max response length
-
-[[env]]
-id = "YOUR_USERNAME/pi_agent_env"   # your pushed environment
-args = { max_turns = 10 }           # max tool-calling turns
-
-[checkpoints]
-interval = 25             # save checkpoint every N steps
-
-# Continue from previous training:
-# checkpoint_id = "wf3qkqg5pclqqy7hitf4z0ho"
+├── configs/
+│   ├── endpoints.toml              # API endpoints for eval
+│   └── rl/
+│       └── pi-agent-30b-1000.toml  # Training config
+├── environments/
+│   └── pi_agent_env/               # Verifiers ToolEnv
+│       ├── pi_agent_env/
+│       │   ├── pi_agent_env.py     # Environment, tools, rubric
+│       │   └── pi_agent_tasks.json # 598 training tasks
+│       ├── pyproject.toml
+│       └── README.md
+├── AGENTS.md                       # Agent instructions
+├── CLAUDE.md                       # Claude Code instructions
+├── secrets.env                     # API keys (gitignored)
+└── README.md
 ```
 
 ## Key Lessons
 
-### 1. Always use the LLM judge
-Without it, reward hits 1.0 by step 35. The model learns to never use tools and writes long plausible responses. With the judge (about $5-10 total), training produces genuine improvements.
+1. **LLM judges get gamed at scale.** Our model learned to skip tools and write confident text to fool the judge. Always add programmatic guardrails for behaviors you care about.
 
-### 2. Team header required for inference
-When calling PI inference API from scripts, include `X-Prime-Team-ID` header or you'll get `Insufficient balance`.
+2. **Programmatic + judge scoring > either alone.** The judge catches subtle quality issues; programmatic rubrics enforce hard constraints the judge can't.
 
-### 3. RL alone works (no SFT needed)
-PI hosted training only supports RL/GRPO. No SFT or adapter upload path. But GRPO alone produced meaningful improvements from the base model.
+3. **Watch tool call metrics, not just reward.** Reward going up while tool calls collapse is the #1 sign of gaming.
 
-### 4. Check `scoring_ms` to verify judge is active
-If `scoring_ms/mean` is <10ms in metrics, the judge isn't running. Should be 100-300ms when active.
+4. **RL alone works (no SFT needed).** GRPO from a base instruct model produced meaningful improvements without any supervised fine-tuning.
 
-## Adding Custom Tasks
+## Built With
 
-1. Create `generate_tasks_batch4.py` following the existing pattern
-2. Run it to append to `synthetic_tasks.json`
-3. Convert: `python3 convert_tasks_pi.py`
-4. Bump version in `environments/pi_agent_env/pyproject.toml`
-5. Push: `prime env push --path ./environments/pi_agent_env`
-6. Train with the updated environment
+- [Prime Intellect Lab](https://docs.primeintellect.ai/guides/rl-training) — RL training infrastructure
+- [verifiers](https://github.com/primeintellect-ai/verifiers) — Environment + rubric framework
+- [Qwen3-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507) — Base model
+- [Qwen3-4B-Instruct](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) — Judge model (via PI inference)
 
-## Cost
+## Training Runs
 
-| Component | Cost |
-|---|---|
-| RL training (200 steps) | Hosted on Prime Intellect |
-| LLM judge (gpt-4.1-nano, 200 steps) | about $5-10 via OpenRouter |
-| Eval (30 tasks, heuristic) | about $0.05 PI inference |
+- **v2 (1000 steps):** [k15hbl5mxbmy65d2xlvb6eef](https://app.primeintellect.ai/dashboard/training/k15hbl5mxbmy65d2xlvb6eef)
+- **v1 (200 steps):** [b4m4eammrloy61ifoo34ndn5](https://app.primeintellect.ai/dashboard/training/b4m4eammrloy61ifoo34ndn5)
 
 ## License
 
 Apache 2.0
-
-## Acknowledgements
-
-- [Prime Intellect](https://www.primeintellect.ai/) — hosted RL training infrastructure
-- [Pi Agent](https://github.com/mariozechner/pi-coding-agent) by Mario Zechner — agent framework
-- [Qwen](https://huggingface.co/Qwen) — base model
-- [OpenRouter](https://openrouter.ai/) — LLM judge API access
-- [prime-verifiers](https://github.com/PrimeIntellect-ai/prime-verifiers) — RL environment framework

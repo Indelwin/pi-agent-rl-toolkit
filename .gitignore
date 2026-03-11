@@ -1,12 +1,26 @@
+# Python-generated files
 __pycache__/
-*.pyc
-*.egg-info/
+*.py[oc]
 build/
 dist/
-.prime/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Outputs from `prime eval run`
 outputs/
-*.zip
-adapter_download/
-eval/results_*/
-.env
+*/outputs/
+*/*/outputs/
+
+# Secrets
 secrets.env
+*.env
+!configs/endpoints.toml
+
+# OS
+.DS_Store
+
+# uv lock (large, regenerated from pyproject.toml)
+uv.lock

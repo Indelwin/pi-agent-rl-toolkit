@@ -1,0 +1,9 @@
+[project]
+name = "pi-agent"
+version = "0.1.0"
+description = "RL-trained tool-use coding agent on Prime Intellect"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "verifiers>=0.1.10",
+]
