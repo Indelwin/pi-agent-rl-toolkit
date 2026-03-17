@@ -213,7 +213,7 @@ curl -X POST https://api.pinference.ai/api/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $PRIME_API_KEY" \
   -d '{
-    "model": "Qwen/Qwen3-30B-A3B-Instruct-2507:wgzna1uwxd52pbv4hw5wtiru",
+    "model": "Qwen/Qwen3-30B-A3B-Instruct-2507:<adapter_id>",
     "messages": [{"role": "user", "content": "Write a Python function to sort a list"}],
     "max_tokens": 512
   }'
