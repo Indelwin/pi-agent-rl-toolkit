@@ -1,0 +1,50 @@
+# =============================================================
+# Continue from checkpoint 700 — lower LR to prevent degeneration
+# =============================================================
+# The original 1000-step run showed gibberish/repetition after
+# step 700, likely due to the default 1e-4 LR being too high
+# in the late training stage. This run continues from step 700
+# with a reduced LR.
+#
+# TODO: Ask PI support about cosine LR scheduling. If available,
+#       use that instead of a constant reduced LR.
+# =============================================================
+
+model = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+# checkpoint_id = "REPLACE_WITH_CHECKPOINT_ID"  # From: prime rl checkpoints <run_id>
+max_steps = 250                                           # 250 more steps (750 → 1000 equivalent)
+batch_size = 256
+rollouts_per_example = 8
+env_file = ["../../secrets.env"]
+
+# Reduced LR: 1/10th of the default to stabilise late training
+learning_rate = 1e-5
+
+[sampling]
+max_tokens = 4096
+
+[[env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 10 }
+
+[checkpoints]
+interval = 50
+keep_cloud = -1                                           # Never delete checkpoints
+
+[eval]
+interval = 50                                             # More frequent evals to catch issues early
+eval_base_model = true
+
+[[eval.env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 10 }
+num_examples = 50
+rollouts_per_example = 4
+
+[val]
+num_examples = 64
+rollouts_per_example = 1
+interval = 10
+
+[buffer]
+online_difficulty_filtering = true
