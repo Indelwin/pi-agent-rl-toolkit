@@ -76,6 +76,31 @@ prime env push my-env --visibility PRIVATE
 2. Keep async level explicit (`max_async_level`) and monitor off-policy drift.
 3. For OOM risk, reduce rollout pressure and sequence lengths before widening training scope.
 
+## Checkpoint Retention
+1. **Always set `keep_cloud = -1`** in `[checkpoints]` to keep all checkpoints in cloud storage.
+2. The default `keep_cloud = 5` only retains the last 5 checkpoints — older ones are permanently deleted.
+3. If training degrades late (gibberish, repetition, reward collapse), you need early checkpoints to resume from. Losing them means starting over.
+4. Storage is cheap; lost checkpoints are not recoverable. Always prefer keeping all:
+```toml
+[checkpoints]
+interval = 50
+keep_cloud = -1
+```
+
+## Learning Rate For Long Runs
+1. The default `learning_rate = 1e-4` is too aggressive for runs beyond ~500 steps. Late-stage training can produce gibberish and repetition.
+2. For runs of 500+ steps, start with `learning_rate = 1e-5` or use a lower rate.
+3. Watch `filter/gibberish` and `filter/repetition` metrics on the dashboard — any upward trend means the LR is too high.
+4. If continuing from a checkpoint after degeneration, drop the LR by at least 10x from the original.
+5. Ask PI support about cosine LR scheduling availability — decay is preferable to a constant rate for long runs.
+
+## Eval Best Practices
+1. **Always run baseline evals before training** using `prime eval run` to establish ground truth.
+2. Set `eval_base_model = true` in the `[eval]` config section for automatic before/after comparison.
+3. Increase eval frequency for longer runs — use `interval = 50` rather than `interval = 100` to catch degradation early.
+4. Monitor tool-level metrics (bash_calls, write_calls, etc.) alongside reward — reward can rise while behavior degrades.
+5. Per-category breakdowns require custom post-processing of saved eval results.
+
 ## Failure Diagnosis
 1. Flat reward near zero:
 - Task too hard, rubric mismatch, or prompt/tool contract mismatch.
@@ -83,6 +108,13 @@ prime env push my-env --visibility PRIVATE
 - Lower learning rate, increase rollout group size, reduce async aggressiveness.
 3. Slow learning despite stability:
 - Revisit task difficulty and reward shaping before increasing risk knobs.
+4. Gibberish or repetition appearing mid-to-late training:
+- Learning rate too high for current stage. Drop LR by 5-10x.
+- Resume from the last clean checkpoint before degeneration started.
+- This was observed in a 1000-step run at default 1e-4 LR — gibberish appeared ~step 500, spiked ~step 700-850.
+5. Reward rising while tool calls collapse:
+- Model is gaming the LLM judge. Add programmatic guardrail reward functions (e.g. `tool_use_required`).
+- Always monitor tool-level metrics, not just aggregate reward.
 
 ## Non-Negotiable Environment Quality During Training
 1. Use deterministic robust checks or LLM judges for rewards.
