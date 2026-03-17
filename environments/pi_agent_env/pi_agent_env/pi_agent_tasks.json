@@ -1,7 +1,7 @@
 {
   "meta": {
     "version": "3.0.0-pi-agent",
-    "description": "Pi Agent eval tasks (converted from Hermes synthetic tasks)",
+    "description": "Pi Agent eval tasks (converted from synthetic tasks)",
     "source_version": "2.1.0-synthetic",
     "total_tasks": 598,
     "dropped_tasks": 140
@@ -2651,7 +2651,7 @@
       "id": "syn_0161",
       "category": "file_ops",
       "name": "File operations",
-      "prompt": "Use bash to find all .json files in ~/.hermes/ (first level only): find ~/.hermes -maxdepth 1 -name '*.json'. Report what you find.",
+      "prompt": "Use bash to find all .json files in ~/.config/ (first level only): find ~/.config -maxdepth 1 -name '*.json'. Report what you find.",
       "requires_tool": true,
       "max_tool_calls": 2,
       "verify": {
