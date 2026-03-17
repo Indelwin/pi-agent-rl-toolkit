@@ -1,0 +1,44 @@
+# =============================================================
+# 1000-step production run — Qwen3-30B-A3B with LLM judge
+# =============================================================
+# Pi Agent tool-use environment with 5 scoring dimensions:
+#   - task_completion (0.35): LLM judge via PI inference
+#   - tool_use_required (0.20): Must use tools when task requires them
+#   - tool_outcomes (0.20): Did tool calls succeed?
+#   - efficiency (0.10): Minimal tool calls within budget
+#   - dummy_call_detection (0.15): No redundant/wasted calls
+# =============================================================
+
+model = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+max_steps = 1000
+batch_size = 256
+rollouts_per_example = 8
+env_file = ["../../secrets.env"]
+
+[sampling]
+max_tokens = 4096
+
+[[env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 10 }
+
+[checkpoints]
+interval = 50
+
+[eval]
+interval = 100
+eval_base_model = true
+
+[[eval.env]]
+id = "anarion/pi_agent_env"
+args = { max_turns = 10 }
+num_examples = 50
+rollouts_per_example = 4
+
+[val]
+num_examples = 64
+rollouts_per_example = 1
+interval = 10
+
+[buffer]
+online_difficulty_filtering = true

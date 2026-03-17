@@ -2,45 +2,36 @@
 Pi Agent Self-Improvement Environment for Prime Intellect Verifiers.
 
 A ToolEnv that replicates Pi Agent's core tools (bash, read, write, python,
-find, grep) and scores the model using the ToolUseRubric — a 4-dimension
-scoring system with LLM judge support.
+find, grep) and scores the model using a JudgeRubric with 5 reward functions.
 
 Scoring dimensions:
-  - task_completion (0.50): LLM judge (gpt-4.1-nano via OpenRouter) evaluates
-    whether the agent completed the task correctly
+  - task_completion (0.35): LLM judge via PI inference (Qwen3-4B-Instruct)
+  - tool_use_required (0.20): Must use tools when the task requires them
   - tool_outcomes (0.20): Did tool calls succeed? (programmatic)
-  - efficiency (0.15): Were tool calls efficient within budget? (programmatic)
+  - efficiency (0.10): Were tool calls efficient within budget? (programmatic)
   - dummy_call_detection (0.15): Were tool results actually used? (programmatic)
 
-Usage:
-  # Quick eval
-  uv run vf-eval pi_agent_env -m openai/gpt-4.1-nano
-
-  # Install & push
-  prime env install pi_agent_env
-  prime env push --path ./environments/pi_agent_env
-
-Secrets required on PI:
-  OPENAI_API_KEY  = OpenRouter API key
-  OPENAI_BASE_URL = https://openrouter.ai/api/v1
+Secrets (passed via env_file in training config):
+  PRIME_API_KEY  = PI API key (auto-available from prime CLI)
+  PRIME_TEAM_ID  = PI team ID (auto-available from prime CLI)
 """
 
 import json
+import logging
+import os
 import re
 import subprocess
-import os
 from pathlib import Path
 from typing import Any
 
 import verifiers as vf
-from verifiers.parsers.parser import Parser
-from verifiers.rubrics.judge_rubric import JudgeRubric
-from verifiers.rubrics.rubric import Rubric
 from verifiers.types import Messages, State
+
+logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Tools — matching Pi Agent's core tool names and signatures
+# Tools
 # ═══════════════════════════════════════════════════════════════════════════
 
 def bash(command: str) -> str:
@@ -54,17 +45,12 @@ def bash(command: str) -> str:
     """
     try:
         result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd="/tmp",
+            command, shell=True, capture_output=True, text=True,
+            timeout=30, cwd="/tmp",
         )
         return json.dumps({
             "output": (result.stdout + result.stderr).strip()[:4000],
-            "exit_code": result.returncode,
-            "error": None,
+            "exit_code": result.returncode, "error": None,
         })
     except subprocess.TimeoutExpired:
         return json.dumps({"output": "", "exit_code": -1, "error": "Command timed out (30s)"})
@@ -124,16 +110,12 @@ def python(code: str) -> str:
     """
     try:
         result = subprocess.run(
-            ["python3", "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd="/tmp",
+            ["python3", "-c", code], capture_output=True, text=True,
+            timeout=30, cwd="/tmp",
         )
         output = (result.stdout + result.stderr).strip()[:4000]
         return json.dumps({
-            "output": output,
-            "exit_code": result.returncode,
+            "output": output, "exit_code": result.returncode,
             "error": None if result.returncode == 0 else output,
         })
     except subprocess.TimeoutExpired:
@@ -198,52 +180,10 @@ PI_AGENT_TOOLS = [bash, read, write, python, find, grep]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ToolUseRubric — 4-dimension scoring with LLM judge
+# Message helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-TASK_COMPLETION_JUDGE_PROMPT = """You are evaluating whether an AI agent successfully completed a task using tools.
-
-Task given to the agent:
-```
-{question}
-```
-
-Expected behavior or answer:
-```
-{answer}
-```
-
-Full agent response (including tool calls and results):
-```
-{response}
-```
-
-Evaluate whether the agent accomplished the task. Consider:
-1. Did the agent produce the correct final answer or outcome?
-2. Did it use tools appropriately for the task?
-3. Did it handle any errors or edge cases?
-
-Respond with ONLY a score from 0 to 10:
-- 0: Complete failure, no progress toward the task
-- 1-3: Attempted but mostly wrong or incomplete
-- 4-6: Partially correct, some aspects done well
-- 7-9: Mostly correct with minor issues
-- 10: Perfect task completion
-
-Score:"""
-
-DEFAULT_WEIGHTS = {
-    "task_completion": 0.50,
-    "tool_outcomes": 0.20,
-    "efficiency": 0.15,
-    "dummy_call_detection": 0.15,
-}
-
-
-# ─── Message helpers (work with OpenAI typed dicts) ──────────────────────
-
 def _msg_get(msg, key, default=None):
-    """Get a field from a message dict."""
     if isinstance(msg, dict):
         return msg.get(key, default)
     return getattr(msg, key, default)
@@ -261,20 +201,16 @@ def _extract_tool_interactions(completion: Messages) -> list[dict[str, Any]]:
     """Extract tool call + result pairs from a completion."""
     if isinstance(completion, str):
         return []
-
     interactions = []
-    # Build map of tool_call_id -> tool result content
     result_map = {}
     for msg in completion:
         if _is_tool_msg(msg):
             content = _msg_get(msg, "content", "")
             if isinstance(content, list):
                 content = " ".join(
-                    b.get("text", str(b)) if isinstance(b, dict) else str(b)
-                    for b in content
+                    b.get("text", str(b)) if isinstance(b, dict) else str(b) for b in content
                 )
-            tid = _msg_get(msg, "tool_call_id", "")
-            result_map[tid] = str(content)
+            result_map[_msg_get(msg, "tool_call_id", "")] = str(content)
 
     for msg in completion:
         if not _is_assistant_msg(msg):
@@ -285,13 +221,8 @@ def _extract_tool_interactions(completion: Messages) -> list[dict[str, Any]]:
         for tc in tool_calls:
             tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
             func = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", {})
-            if isinstance(func, dict):
-                name = func.get("name", "")
-                arguments = func.get("arguments", "{}")
-            else:
-                name = getattr(func, "name", "")
-                arguments = getattr(func, "arguments", "{}")
-
+            name = func.get("name", "") if isinstance(func, dict) else getattr(func, "name", "")
+            arguments = func.get("arguments", "{}") if isinstance(func, dict) else getattr(func, "arguments", "{}")
             result_content = result_map.get(tc_id, "")
             success = _is_tool_result_success(result_content)
             try:
@@ -299,17 +230,13 @@ def _extract_tool_interactions(completion: Messages) -> list[dict[str, Any]]:
             except (json.JSONDecodeError, TypeError):
                 args = {}
             interactions.append({
-                "tool_name": name,
-                "tool_args": args,
-                "tool_call_id": tc_id,
-                "result_content": result_content,
-                "success": success,
+                "tool_name": name, "tool_args": args, "tool_call_id": tc_id,
+                "result_content": result_content, "success": success,
             })
     return interactions
 
 
 def _is_tool_result_success(content: str) -> bool:
-    """Heuristic: check if a tool result indicates success."""
     if not content:
         return False
     lower = content.lower()
@@ -323,17 +250,12 @@ def _is_tool_result_success(content: str) -> bool:
             return True
     except (json.JSONDecodeError, TypeError):
         pass
-    error_indicators = [
-        "error:", "traceback", "exception", "file not found",
-        "permission denied", "command not found", "no such file",
-    ]
-    if any(indicator in lower for indicator in error_indicators):
-        return False
-    return True
+    error_indicators = ["error:", "traceback", "exception", "file not found",
+                        "permission denied", "command not found", "no such file"]
+    return not any(ind in lower for ind in error_indicators)
 
 
 def _get_final_text_response(completion: Messages) -> str:
-    """Extract the final assistant text (non-tool-call) response."""
     if isinstance(completion, str):
         return completion
     for msg in reversed(completion):
@@ -365,272 +287,203 @@ def _get_final_text_response(completion: Messages) -> str:
     return ""
 
 
-def _format_completion_for_judge(completion: Messages) -> str:
-    """Format the full completion (including tool calls/results) for the judge."""
-    if isinstance(completion, str):
-        return completion
-    parts = []
-    for msg in completion:
-        if _is_assistant_msg(msg):
-            tool_calls = _msg_get(msg, "tool_calls")
-            if tool_calls:
-                for tc in tool_calls:
-                    func = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", {})
-                    if isinstance(func, dict):
-                        name = func.get("name", "")
-                        arguments = func.get("arguments", "{}")
-                    else:
-                        name = getattr(func, "name", "")
-                        arguments = getattr(func, "arguments", "{}")
-                    parts.append(f"[Tool Call: {name}({arguments})]")
-            content = _msg_get(msg, "content")
-            if content:
-                if isinstance(content, str):
-                    parts.append(f"Assistant: {content}")
-                elif isinstance(content, list):
-                    text_parts = []
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text_parts.append(block.get("text", ""))
-                        elif isinstance(block, str):
-                            text_parts.append(block)
-                    if text_parts:
-                        parts.append(f"Assistant: {' '.join(text_parts)}")
-        elif _is_tool_msg(msg):
-            content = _msg_get(msg, "content", "")
-            if isinstance(content, list):
-                content = " ".join(
-                    b.get("text", str(b)) if isinstance(b, dict) else str(b)
-                    for b in content
-                )
-            parts.append(f"[Tool Result: {str(content)[:500]}]")
-    return "\n".join(parts)
+# ═══════════════════════════════════════════════════════════════════════════
+# Reward functions — standalone, following verifiers docs pattern
+# ═══════════════════════════════════════════════════════════════════════════
+
+JUDGE_PROMPT = """You are evaluating whether an AI agent successfully completed a task using tools.
+
+Task given to the agent:
+```
+{question}
+```
+
+Expected behavior or answer:
+```
+{answer}
+```
+
+Full agent response (including tool calls and results):
+```
+{response}
+```
+
+Evaluate whether the agent accomplished the task. Consider:
+1. Did the agent produce the correct final answer or outcome?
+2. Did it use tools appropriately for the task?
+3. Did it handle any errors or edge cases?
+
+Respond with ONLY a score from 0 to 10:
+- 0: Complete failure, no progress toward the task
+- 1-3: Attempted but mostly wrong or incomplete
+- 4-6: Partially correct, some aspects done well
+- 7-9: Mostly correct with minor issues
+- 10: Perfect task completion
+
+Score:"""
 
 
-class ToolConversationParser(Parser):
-    """Parser that formats full tool-calling conversations for LLM judge evaluation.
+async def task_completion(prompt, completion, answer, judge) -> float:
+    """Score task completion using LLM judge."""
+    try:
+        judge_response = await judge(prompt, completion, answer)
+    except Exception as e:
+        logger.warning(f"Judge call failed: {e}")
+        response = _get_final_text_response(completion)
+        return 1.0 if len(response) > 10 else 0.0
 
-    Instead of extracting only the last assistant message, this formats the
-    entire completion including tool calls and results.
+    numbers = re.findall(r"\b(\d+(?:\.\d+)?)\b", judge_response)
+    if numbers:
+        score = float(numbers[-1])
+        return min(score / 10.0, 1.0)
+    lower = judge_response.lower().strip()
+    if lower.startswith("yes"):
+        return 1.0
+    if lower.startswith("no"):
+        return 0.0
+    return 0.5
+
+
+async def tool_use_required(completion, info) -> float:
+    """Penalize not using tools when the task requires them.
+    
+    Checks the task's `requires_tool` metadata. If the task requires tools
+    and the model made zero tool calls, returns 0.0. If tools were used
+    (or the task doesn't require them), returns 1.0.
     """
-
-    def parse_answer(self, completion: Messages) -> str:
-        return _format_completion_for_judge(completion)
-
-
-class ToolUseRubric(JudgeRubric):
-    """Rubric for evaluating tool-calling agent performance.
-
-    Four scoring dimensions:
-      1. task_completion (0.50): LLM judge or heuristic
-      2. tool_outcomes (0.20): Did tool calls succeed?
-      3. efficiency (0.15): Were calls within budget?
-      4. dummy_call_detection (0.15): Were results actually used?
-    """
-
-    def __init__(
-        self,
-        use_judge: bool = True,
-        weights: dict[str, float] | None = None,
-        max_tool_calls: int = 10,
-        judge_model: str = "openai/gpt-4.1-nano",
-        **kwargs,
-    ):
-        judge_parser = ToolConversationParser()
-
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if use_judge and api_key:
-            from openai import AsyncOpenAI
-            # Build client pointing at OpenRouter (env vars set via PI secrets)
-            client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
-            )
-            JudgeRubric.__init__(
-                self,
-                parser=judge_parser,
-                judge_client=client,
-                judge_model=judge_model,
-                judge_prompt=TASK_COMPLETION_JUDGE_PROMPT,
-                **kwargs,
-            )
-        else:
-            if use_judge and not api_key:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "OPENAI_API_KEY not set — falling back to heuristic scoring (no judge)"
-                )
-                use_judge = False
-            Rubric.__init__(self, parser=judge_parser, **kwargs)
-
-        self.use_judge = use_judge
-        self.max_tool_calls = max_tool_calls
-
-        # Normalize weights
-        w = weights or dict(DEFAULT_WEIGHTS)
-        total = sum(w.values())
-        self._dimension_weights = {k: v / total for k, v in w.items()}
-
-        # Register reward functions
-        self.add_reward_func(
-            self.task_completion,
-            weight=self._dimension_weights["task_completion"],
-        )
-        self.add_reward_func(
-            self.tool_outcomes,
-            weight=self._dimension_weights["tool_outcomes"],
-        )
-        self.add_reward_func(
-            self.efficiency,
-            weight=self._dimension_weights["efficiency"],
-        )
-        self.add_reward_func(
-            self.dummy_call_detection,
-            weight=self._dimension_weights["dummy_call_detection"],
-        )
-
-    async def task_completion(
-        self,
-        prompt: Messages,
-        completion: Messages,
-        answer: str,
-        state: State,
-        **kwargs,
-    ) -> float:
-        """Score task completion using LLM judge or heuristic fallback."""
-        if not self.use_judge:
-            response = _get_final_text_response(completion)
-            return 1.0 if len(response) > 10 else 0.0
-
+    # Parse task info
+    task_info = info
+    if isinstance(info, str):
         try:
-            judge_response = await self.judge(
-                prompt=prompt,
-                completion=completion,
-                answer=answer,
-                state=state,
-            )
-        except Exception:
-            # Fallback to heuristic if judge fails
-            response = _get_final_text_response(completion)
-            return 1.0 if len(response) > 10 else 0.0
+            task_info = json.loads(info)
+        except (json.JSONDecodeError, TypeError):
+            task_info = {}
+    if not isinstance(task_info, dict):
+        task_info = {}
 
-        # Extract numeric score from judge response
-        numbers = re.findall(r"\b(\d+(?:\.\d+)?)\b", judge_response)
-        if numbers:
-            score = float(numbers[-1])
-            return min(score / 10.0, 1.0)
-        lower = judge_response.lower().strip()
-        if lower.startswith("yes"):
-            return 1.0
-        if lower.startswith("no"):
-            return 0.0
-        return 0.5
+    requires_tool = task_info.get("requires_tool", False)
+    if not requires_tool:
+        # Task doesn't require tools — no penalty either way
+        return 1.0
 
-    async def tool_outcomes(self, completion: Messages, **kwargs) -> float:
-        """Score based on whether tool calls executed successfully."""
-        interactions = _extract_tool_interactions(completion)
-        if not interactions:
-            return 1.0
-        successes = sum(1 for i in interactions if i["success"])
-        return successes / len(interactions)
+    # Task requires tools — check if model used any
+    interactions = _extract_tool_interactions(completion)
+    if len(interactions) == 0:
+        # Required tools but used none — hard penalty
+        return 0.0
 
-    async def efficiency(self, completion: Messages, info: Any = None, **kwargs) -> float:
-        """Score tool call efficiency relative to a budget."""
-        interactions = _extract_tool_interactions(completion)
-        num_calls = len(interactions)
+    # Used at least one tool on a tool-required task
+    return 1.0
 
-        if num_calls == 0:
-            return 1.0
 
-        budget = self.max_tool_calls
-        if info:
-            task_info = info
-            if isinstance(info, str):
-                try:
-                    task_info = json.loads(info)
-                except (json.JSONDecodeError, TypeError):
-                    task_info = {}
-            if isinstance(task_info, dict):
-                budget = task_info.get("max_tool_calls", self.max_tool_calls)
+async def tool_outcomes(completion) -> float:
+    """Score based on whether tool calls executed successfully."""
+    interactions = _extract_tool_interactions(completion)
+    if not interactions:
+        return 1.0
+    successes = sum(1 for i in interactions if i["success"])
+    return successes / len(interactions)
 
-        if num_calls <= budget:
-            return 1.0 - 0.5 * (num_calls / max(budget, 1))
-        else:
-            overshoot = (num_calls - budget) / max(budget, 1)
-            return max(0.0, 0.5 - overshoot * 0.5)
 
-    async def dummy_call_detection(self, completion: Messages, **kwargs) -> float:
-        """Detect and penalize dummy/wasteful tool calls."""
-        interactions = _extract_tool_interactions(completion)
-        if not interactions:
-            return 1.0
+async def efficiency(completion, info) -> float:
+    """Score tool call efficiency relative to a budget."""
+    interactions = _extract_tool_interactions(completion)
+    num_calls = len(interactions)
+    if num_calls == 0:
+        return 1.0
 
-        penalties = 0.0
-        num_checks = 0
+    budget = 10
+    if info:
+        task_info = info
+        if isinstance(info, str):
+            try:
+                task_info = json.loads(info)
+            except (json.JSONDecodeError, TypeError):
+                task_info = {}
+        if isinstance(task_info, dict):
+            try:
+                budget = int(task_info.get("max_tool_calls", 10))
+            except (ValueError, TypeError):
+                budget = 10
 
-        # Check 1: Redundant calls (same tool + same args)
-        seen_calls: set[str] = set()
-        redundant_count = 0
+    if num_calls <= budget:
+        return 1.0 - 0.5 * (num_calls / max(budget, 1))
+    else:
+        overshoot = (num_calls - budget) / max(budget, 1)
+        return max(0.0, 0.5 - overshoot * 0.5)
+
+
+async def dummy_call_detection(completion) -> float:
+    """Detect and penalize dummy/wasteful tool calls."""
+    interactions = _extract_tool_interactions(completion)
+    if not interactions:
+        return 1.0
+
+    penalties = 0.0
+    num_checks = 0
+
+    # Check 1: Redundant calls
+    seen_calls: set[str] = set()
+    redundant_count = 0
+    for interaction in interactions:
+        key = f"{interaction['tool_name']}:{json.dumps(interaction['tool_args'], sort_keys=True)}"
+        if key in seen_calls:
+            redundant_count += 1
+        seen_calls.add(key)
+
+    if len(interactions) > 0:
+        num_checks += 1
+        penalties += redundant_count / len(interactions)
+
+    # Check 2: Repeated failures
+    failed_calls: set[str] = set()
+    repeat_after_fail = 0
+    for interaction in interactions:
+        key = f"{interaction['tool_name']}:{json.dumps(interaction['tool_args'], sort_keys=True)}"
+        if not interaction["success"]:
+            if key in failed_calls:
+                repeat_after_fail += 1
+            failed_calls.add(key)
+
+    if repeat_after_fail > 0:
+        num_checks += 1
+        penalties += min(1.0, repeat_after_fail / len(interactions))
+
+    # Check 3: Tool results referenced in final response
+    final_response = _get_final_text_response(completion)
+    if final_response and interactions:
+        num_checks += 1
+        any_referenced = False
         for interaction in interactions:
-            key = f"{interaction['tool_name']}:{json.dumps(interaction['tool_args'], sort_keys=True)}"
-            if key in seen_calls:
-                redundant_count += 1
-            seen_calls.add(key)
+            result = interaction["result_content"]
+            if not result or len(result) < 5:
+                continue
+            try:
+                parsed_result = json.loads(result)
+                if isinstance(parsed_result, dict):
+                    check_values = [
+                        str(v) for v in parsed_result.values()
+                        if v and isinstance(v, (str, int, float)) and str(v).strip()
+                    ]
+                else:
+                    check_values = [str(parsed_result)]
+            except (json.JSONDecodeError, TypeError):
+                check_values = [result]
 
-        if len(interactions) > 0:
-            num_checks += 1
-            redundant_ratio = redundant_count / len(interactions)
-            penalties += redundant_ratio
-
-        # Check 2: Repeated failures without adaptation
-        failed_calls: set[str] = set()
-        repeat_after_fail = 0
-        for interaction in interactions:
-            key = f"{interaction['tool_name']}:{json.dumps(interaction['tool_args'], sort_keys=True)}"
-            if not interaction["success"]:
-                if key in failed_calls:
-                    repeat_after_fail += 1
-                failed_calls.add(key)
-
-        if repeat_after_fail > 0:
-            num_checks += 1
-            penalties += min(1.0, repeat_after_fail / len(interactions))
-
-        # Check 3: Tool results referenced in final response
-        final_response = _get_final_text_response(completion)
-        if final_response and interactions:
-            num_checks += 1
-            any_referenced = False
-            for interaction in interactions:
-                result = interaction["result_content"]
-                if not result or len(result) < 5:
-                    continue
-                try:
-                    parsed_result = json.loads(result)
-                    if isinstance(parsed_result, dict):
-                        check_values = [
-                            str(v) for v in parsed_result.values()
-                            if v and isinstance(v, (str, int, float)) and str(v).strip()
-                        ]
-                    else:
-                        check_values = [str(parsed_result)]
-                except (json.JSONDecodeError, TypeError):
-                    check_values = [result]
-
-                for val in check_values:
-                    val_str = str(val).strip()
-                    if len(val_str) >= 3 and val_str[:50].lower() in final_response.lower():
-                        any_referenced = True
-                        break
-                if any_referenced:
+            for val in check_values:
+                val_str = str(val).strip()
+                if len(val_str) >= 3 and val_str[:50].lower() in final_response.lower():
+                    any_referenced = True
                     break
+            if any_referenced:
+                break
 
-            if not any_referenced:
-                penalties += 0.5
+        if not any_referenced:
+            penalties += 0.5
 
-        if num_checks == 0:
-            return 1.0
-        return max(0.0, 1.0 - penalties / num_checks)
+    if num_checks == 0:
+        return 1.0
+    return max(0.0, 1.0 - penalties / num_checks)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -638,10 +491,7 @@ class ToolUseRubric(JudgeRubric):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _load_pi_tasks():
-    """Load Pi Agent tasks from pi_agent_tasks.json."""
-    search_paths = [
-        Path(__file__).parent / "pi_agent_tasks.json",
-    ]
+    search_paths = [Path(__file__).parent / "pi_agent_tasks.json"]
     try:
         import importlib.resources as pkg_resources
         ref = pkg_resources.files("pi_agent_env").joinpath("pi_agent_tasks.json")
@@ -649,24 +499,17 @@ def _load_pi_tasks():
             return json.loads(ref.read_text())
     except (ImportError, TypeError, FileNotFoundError, ModuleNotFoundError):
         pass
-
     for p in search_paths:
         if p.exists():
             with open(p) as f:
                 return json.load(f)
-
-    raise FileNotFoundError(
-        "pi_agent_tasks.json not found. Run convert_tasks_pi.py first."
-    )
+    raise FileNotFoundError("pi_agent_tasks.json not found.")
 
 
 def build_dataset():
-    """Build a HuggingFace Dataset from Pi Agent tasks."""
     from datasets import Dataset
-
     tasks_data = _load_pi_tasks()
     tasks = tasks_data.get("tasks", tasks_data)
-
     records = []
     for task in tasks:
         verify = task.get("verify", {})
@@ -681,7 +524,6 @@ def build_dataset():
             "answer": json.dumps(verify),
             "info": json.dumps(info),
         })
-
     return Dataset.from_list(records)
 
 
@@ -698,18 +540,65 @@ SYSTEM_PROMPT = (
 
 
 def load_environment(**kwargs):
-    """Load the Pi Agent self-improvement environment.
+    """Load the Pi Agent self-improvement environment."""
+    # Ensure numeric args are ints (PI may pass TOML values as strings)
+    for int_key in ("max_turns",):
+        if int_key in kwargs:
+            try:
+                kwargs[int_key] = int(kwargs[int_key])
+            except (ValueError, TypeError):
+                pass
 
-    Uses ToolUseRubric with LLM judge (gpt-4.1-nano via OpenRouter) by default.
-    Set use_judge=False in kwargs to disable judge and use heuristic scoring only.
-    """
+    # Build judge rubric — try PI inference first, then OpenRouter, then heuristic
+    prime_api_key = os.environ.get("PRIME_API_KEY")
+    prime_team_id = os.environ.get("PRIME_TEAM_ID")
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    judge_model = kwargs.pop("judge_model", None)
     use_judge = kwargs.pop("use_judge", True)
-    judge_model = kwargs.pop("judge_model", "openai/gpt-4.1-nano")
 
-    rubric = ToolUseRubric(
-        use_judge=use_judge,
-        judge_model=judge_model,
-    )
+    judge_client = None
+    if use_judge and prime_api_key and prime_team_id:
+        # Use PI's own inference API (accessible from within PI infrastructure)
+        from openai import AsyncOpenAI
+        judge_client = AsyncOpenAI(
+            api_key=prime_api_key,
+            base_url="https://api.pinference.ai/api/v1",
+            default_headers={"X-Prime-Team-ID": prime_team_id},
+        )
+        if not judge_model:
+            judge_model = "Qwen/Qwen3-4B-Instruct-2507"
+        print(f"[pi_agent_env] Judge: PI inference ({judge_model})")
+    elif use_judge and openai_api_key:
+        # Fallback: OpenRouter (may not work from PI env containers)
+        from openai import AsyncOpenAI
+        judge_client = AsyncOpenAI(api_key=openai_api_key, base_url=openai_base_url)
+        if not judge_model:
+            judge_model = "openai/gpt-4.1-nano"
+        print(f"[pi_agent_env] Judge: OpenRouter ({judge_model})")
+    else:
+        print(f"[pi_agent_env] Judge: DISABLED (no API keys available)")
+
+    if judge_client:
+        rubric = vf.JudgeRubric(
+            judge_client=judge_client,
+            judge_model=judge_model,
+            judge_prompt=JUDGE_PROMPT,
+        )
+        rubric.add_reward_func(task_completion, weight=0.35)
+    else:
+        rubric = vf.Rubric()
+        # Without judge, use heuristic for task completion
+        async def heuristic_task_completion(completion) -> float:
+            response = _get_final_text_response(completion)
+            return 1.0 if len(response) > 10 else 0.0
+        rubric.add_reward_func(heuristic_task_completion, weight=0.35)
+
+    rubric.add_reward_func(tool_use_required, weight=0.20)
+    rubric.add_reward_func(tool_outcomes, weight=0.20)
+    rubric.add_reward_func(efficiency, weight=0.10)
+    rubric.add_reward_func(dummy_call_detection, weight=0.15)
+
     dataset = build_dataset()
 
     return vf.ToolEnv(
