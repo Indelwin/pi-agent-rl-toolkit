@@ -1,9 +1,26 @@
 [project]
-name = "pi-agent"
+name = "pi-learn"
 version = "0.1.0"
-description = "RL-trained tool-use coding agent on Prime Intellect"
+description = "Learning, trace, and optimization utilities for Pi Agent workflows"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "datasets",
     "verifiers>=0.1.10",
+]
+
+[project.scripts]
+pi-learn = "pi_learn.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pi_learn"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+    "environments/pi_agent_env",
 ]

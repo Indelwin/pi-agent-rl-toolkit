@@ -6,6 +6,27 @@ Train AI coding agents to use tools effectively using **reinforcement learning (
 
 An RL environment that teaches **Qwen3-30B-A3B** to use coding tools (bash, read, write, python, find, grep) across 598 diverse tasks. The model learns *when* to use tools, *when* to answer directly, and how to use tools efficiently.
 
+The repo also ships `pi_learn`, a small Python learning core for trace artifacts, metrics, JSONL export/import, and optimizer-ready examples. The Prime/Verifiers environment remains the training seed; `pi_learn` is the reusable package surface around it.
+
+## `pi_learn` Trace Artifacts
+
+`pi_learn` gives evals and training runs a durable artifact shape:
+
+- `LearningTask`, `RolloutTrace`, `RolloutEvent`, `ScoreResult`, and `EvalReport` dataclasses.
+- SQLite `TraceStore` with one run row per rollout and one event table for tool/scoring lifecycle events.
+- JSONL export/import for portable traces.
+- Metric helpers for exact match, contains match, Jaccard similarity, all-fields match, and averaged metrics.
+- Example mining for BootstrapFewshot/GEPA-style optimization loops.
+
+CLI:
+
+```bash
+pi-learn trace list --db ./traces.sqlite
+pi-learn trace show <run_id> --db ./traces.sqlite
+pi-learn trace export --db ./traces.sqlite --output traces.jsonl
+pi-learn examples mine --db ./traces.sqlite --program-id pi-agent-env
+```
+
 ## Results
 
 ### v2: 1000-Step Run (with anti-gaming guardrail)
